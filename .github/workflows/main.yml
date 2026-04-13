@@ -1,0 +1,33 @@
+name: CI Space Word
+
+on:
+  push:
+    branches:
+      - "**" # S'active sur un push sur n'importe quelle branche
+  pull_request:
+    branches:
+      - main # S'active sur une PR visant la branche principale
+  workflow_dispatch: # Permet le lancement manuel
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Security Audit (npm audit)
+        run: npm audit --audit-level=moderate
+
+      - name: Linting (Google Style Guide)
+        run: npm run lint
+
+      - name: Run Tests with Annotations
+        run: npm test
