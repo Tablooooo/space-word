@@ -289,7 +289,7 @@ function createAnEnemy() {
   );
 }
 
-export function getRandomInt(min, max) {
+function getRandomInt(min, max) {
   min = Math.ceil(min);
   max = Math.floor(max);
 
@@ -434,7 +434,7 @@ function gameLoop(timeStamp) {
   }
 }
 
-export function beginGame() {
+function beginGame() {
   document.getElementById("retry").style.visibility = "hidden";
   isGameBegins = true;
   isDead = false;

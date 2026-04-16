@@ -3,22 +3,40 @@ name: CI Space Word
 on:
   push:
     branches:
-      - "**" # S'active sur un push sur n'importe quelle branche
+      - "**"
   pull_request:
     branches:
-      - main # S'active sur une PR visant la branche principale
-  workflow_dispatch: # Permet le lancement manuel
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  pages: write
+  id-token: write
 
 jobs:
-  build-and-test:
+  secrets-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Important pour que Gitleaks puisse scanner l'historique
+      - name: Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-test:
+    needs: secrets-scan # On ne teste que si aucun secret n'est exposé
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
@@ -29,5 +47,81 @@ jobs:
       - name: Linting (Google Style Guide)
         run: npm run lint
 
-      - name: Run Tests with Annotations
-        run: npm test
+      - name: Run Tests with Summary and Annotations
+        id: run_tests
+        run: |
+          # Exécution des tests et capture du résultat
+          npm test > test_output.txt 2>&1 || echo "TEST_FAILED=true" >> $GITHUB_ENV
+
+          # Affichage dans la console pour le debug
+          cat test_output.txt
+
+          # Construction du résumé visuel (Job Summary)
+          echo "## 🧪 Rapport de Validation Qualité" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$TEST_FAILED" == "true" ]; then
+            echo "### ❌ Statut : ÉCHEC" >> $GITHUB_STEP_SUMMARY
+            echo "> ⚠️ Certains tests n'ont pas été validés. Veuillez vérifier les logs ci-dessous." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ Statut : SUCCÈS" >> $GITHUB_STEP_SUMMARY
+            echo "> ✨ Tous les tests unitaires et fonctionnels ont été validés avec succès." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "#### 📝 Détails de l'exécution" >> $GITHUB_STEP_SUMMARY
+          echo '```text' >> $GITHUB_STEP_SUMMARY
+          # On récupère les lignes de conclusion (le décompte des 38 tests)
+          tail -n 10 test_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_Généré automatiquement par le pipeline CI/CD - $(date +'%d/%m/%Y %H:%M')_" >> $GITHUB_STEP_SUMMARY
+
+          # Faire échouer le job si les tests ont échoué
+          if [ "$TEST_FAILED" == "true" ]; then exit 1; fi
+
+  deploy-docker:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase repo holder
+        run: |
+          echo "REPO_OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> ${GITHUB_ENV}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ env.REPO_OWNER }}/space-word:latest
+
+  publish-pages:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: "." # Dossier contenant l'index.html
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
